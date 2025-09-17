@@ -724,6 +724,10 @@ class AutoClicker:
         # 初始化运行状态
         self.start_time = time.time()
         self.total_click_count = 0
+        self.click_count = 0  # 重置总点击次数显示
+        
+        # 立即更新显示
+        self.update_click_count()
         
         # 启动点击线程
         self.click_thread = threading.Thread(target=self.clicking_loop, daemon=True)
