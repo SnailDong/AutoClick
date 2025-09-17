@@ -182,9 +182,9 @@ class AutoClicker:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("自动点击器 - 支持Windows/Mac")
-        self.root.geometry("520x750")
+        self.root.geometry("520x700")
         self.root.resizable(True, True)
-        self.root.minsize(480, 650)
+        self.root.minsize(480, 500)
         
         # 设置程序图标和样式
         self.setup_style()
@@ -193,9 +193,14 @@ class AutoClicker:
         self.click_area = None  # (x1, y1, x2, y2)
         self.is_running = False
         self.click_thread = None
+        self.start_time = None  # 开始时间
+        self.total_click_count = 0  # 总点击次数
         
         # 创建GUI界面
         self.create_widgets()
+        
+        # 绑定快捷键
+        self.bind_hotkeys()
         
         # 禁用pyautogui的安全机制（小心使用）
         pyautogui.FAILSAFE = False
@@ -211,6 +216,78 @@ class AutoClicker:
             style.theme_use('winnative')
         else:
             style.theme_use('clam')
+    
+    def create_scrollable_frame(self):
+        """创建可滚动的主框架"""
+        # 创建主容器框架
+        container_frame = ttk.Frame(self.root)
+        container_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 创建画布和滚动条
+        self.canvas = tk.Canvas(container_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container_frame, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas, padding="20")
+        
+        # 配置滚动区域
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+        
+        # 创建画布窗口
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        
+        # 配置画布滚动
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # 布局画布和滚动条
+        self.canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # 绑定鼠标滚轮事件
+        self.bind_mousewheel()
+        
+        # 绑定画布大小变化事件
+        self.canvas.bind('<Configure>', self.on_canvas_configure)
+        
+    def bind_mousewheel(self):
+        """绑定鼠标滚轮事件"""
+        def _on_mousewheel(event):
+            # Windows 和 Linux
+            if platform.system() in ["Windows", "Linux"]:
+                self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            # macOS
+            elif platform.system() == "Darwin":
+                self.canvas.yview_scroll(int(-1*event.delta), "units")
+                
+        def _on_mousewheel_mac(event):
+            # macOS 的触控板滚动事件
+            self.canvas.yview_scroll(int(-1*event.delta), "units")
+            
+        def _bind_to_mousewheel(event):
+            if platform.system() == "Darwin":
+                # macOS 需要绑定不同的事件
+                self.canvas.bind_all("<MouseWheel>", _on_mousewheel_mac)
+                self.canvas.bind_all("<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units"))
+                self.canvas.bind_all("<Button-5>", lambda e: self.canvas.yview_scroll(1, "units"))
+            else:
+                self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            
+        def _unbind_from_mousewheel(event):
+            self.canvas.unbind_all("<MouseWheel>")
+            if platform.system() == "Darwin":
+                self.canvas.unbind_all("<Button-4>")
+                self.canvas.unbind_all("<Button-5>")
+            
+        # 当鼠标进入画布时绑定滚轮事件
+        self.canvas.bind('<Enter>', _bind_to_mousewheel)
+        # 当鼠标离开画布时解绑滚轮事件
+        self.canvas.bind('<Leave>', _unbind_from_mousewheel)
+        
+    def on_canvas_configure(self, event):
+        """画布大小变化时调整内容宽度"""
+        canvas_width = event.width
+        self.canvas.itemconfig(self.canvas_window, width=canvas_width)
             
     def create_widgets(self):
         """创建GUI组件"""
@@ -228,27 +305,29 @@ class AutoClicker:
         info_label = tk.Label(self.root, text=system_info, fg="#7f8c8d")
         info_label.pack()
         
-        # 创建主框架
-        main_frame = ttk.Frame(self.root, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # 创建可滚动的主框架
+        self.create_scrollable_frame()
         
         # 1. 区域选择部分
-        self.create_area_section(main_frame)
+        self.create_area_section(self.scrollable_frame)
         
         # 2. 时间设置部分
-        self.create_time_section(main_frame)
+        self.create_time_section(self.scrollable_frame)
         
         # 3. 点击次数设置部分
-        self.create_click_section(main_frame)
+        self.create_click_section(self.scrollable_frame)
         
         # 4. 位置偏差设置部分
-        self.create_offset_section(main_frame)
+        self.create_offset_section(self.scrollable_frame)
         
-        # 5. 控制按钮部分
-        self.create_control_section(main_frame)
+        # 5. 时长和次数限制设置部分
+        self.create_limit_section(self.scrollable_frame)
         
-        # 6. 状态显示部分
-        self.create_status_section(main_frame)
+        # 6. 控制按钮部分
+        self.create_control_section(self.scrollable_frame)
+        
+        # 7. 状态显示部分
+        self.create_status_section(self.scrollable_frame)
         
     def create_area_section(self, parent):
         """创建区域选择部分"""
@@ -257,9 +336,9 @@ class AutoClicker:
         
         self.area_button = ttk.Button(
             area_frame,
-            text="选择屏幕区域",
+            text="选择屏幕区域 (Ctrl+S)",
             command=self.select_click_area,
-            width=20
+            width=22
         )
         self.area_button.pack(side=tk.LEFT)
         
@@ -357,6 +436,119 @@ class AutoClicker:
         y_offset_entry = ttk.Entry(y_offset_frame, textvariable=self.y_offset_var, width=10)
         y_offset_entry.pack(side=tk.LEFT, padx=(10, 0))
         
+    def create_limit_section(self, parent):
+        """创建时长和次数限制设置部分"""
+        limit_frame = ttk.LabelFrame(parent, text="⏱️ 运行限制设置", padding="10")
+        limit_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # 时长限制设置
+        duration_frame = ttk.Frame(limit_frame)
+        duration_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # 时长限制复选框和输入框
+        duration_control_frame = ttk.Frame(duration_frame)
+        duration_control_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        self.duration_limit_var = tk.BooleanVar(value=False)
+        duration_checkbox = ttk.Checkbutton(
+            duration_control_frame,
+            text="限制运行时长:",
+            variable=self.duration_limit_var,
+            command=self.toggle_duration_limit
+        )
+        duration_checkbox.pack(side=tk.LEFT)
+        
+        self.duration_var = tk.StringVar(value="10")
+        self.duration_entry = ttk.Entry(duration_control_frame, textvariable=self.duration_var, width=10, state=tk.DISABLED)
+        self.duration_entry.pack(side=tk.LEFT, padx=(10, 5))
+        
+        ttk.Label(duration_control_frame, text="分钟").pack(side=tk.LEFT)
+        
+        # 无限时长选项
+        unlimited_duration_frame = ttk.Frame(duration_frame)
+        unlimited_duration_frame.pack(fill=tk.X)
+        
+        self.unlimited_duration_var = tk.BooleanVar(value=True)
+        unlimited_duration_checkbox = ttk.Checkbutton(
+            unlimited_duration_frame,
+            text="无限时长运行",
+            variable=self.unlimited_duration_var,
+            command=self.toggle_unlimited_duration
+        )
+        unlimited_duration_checkbox.pack(side=tk.LEFT)
+        
+        # 分隔线
+        separator = ttk.Separator(limit_frame, orient='horizontal')
+        separator.pack(fill=tk.X, pady=10)
+        
+        # 次数限制设置
+        count_frame = ttk.Frame(limit_frame)
+        count_frame.pack(fill=tk.X)
+        
+        # 次数限制复选框和输入框
+        count_control_frame = ttk.Frame(count_frame)
+        count_control_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        self.count_limit_var = tk.BooleanVar(value=False)
+        count_checkbox = ttk.Checkbutton(
+            count_control_frame,
+            text="限制总点击次数:",
+            variable=self.count_limit_var,
+            command=self.toggle_count_limit
+        )
+        count_checkbox.pack(side=tk.LEFT)
+        
+        self.max_total_clicks_var = tk.StringVar(value="1000")
+        self.count_entry = ttk.Entry(count_control_frame, textvariable=self.max_total_clicks_var, width=10, state=tk.DISABLED)
+        self.count_entry.pack(side=tk.LEFT, padx=(10, 5))
+        
+        ttk.Label(count_control_frame, text="次").pack(side=tk.LEFT)
+        
+        # 无限次数选项
+        unlimited_count_frame = ttk.Frame(count_frame)
+        unlimited_count_frame.pack(fill=tk.X)
+        
+        self.unlimited_count_var = tk.BooleanVar(value=True)
+        unlimited_count_checkbox = ttk.Checkbutton(
+            unlimited_count_frame,
+            text="无限次数点击",
+            variable=self.unlimited_count_var,
+            command=self.toggle_unlimited_count
+        )
+        unlimited_count_checkbox.pack(side=tk.LEFT)
+        
+    def toggle_duration_limit(self):
+        """切换时长限制状态"""
+        if self.duration_limit_var.get():
+            self.duration_entry.config(state=tk.NORMAL)
+            self.unlimited_duration_var.set(False)
+        else:
+            self.duration_entry.config(state=tk.DISABLED)
+            if not self.count_limit_var.get():
+                self.unlimited_duration_var.set(True)
+                
+    def toggle_unlimited_duration(self):
+        """切换无限时长状态"""
+        if self.unlimited_duration_var.get():
+            self.duration_limit_var.set(False)
+            self.duration_entry.config(state=tk.DISABLED)
+            
+    def toggle_count_limit(self):
+        """切换次数限制状态"""
+        if self.count_limit_var.get():
+            self.count_entry.config(state=tk.NORMAL)
+            self.unlimited_count_var.set(False)
+        else:
+            self.count_entry.config(state=tk.DISABLED)
+            if not self.duration_limit_var.get():
+                self.unlimited_count_var.set(True)
+                
+    def toggle_unlimited_count(self):
+        """切换无限次数状态"""
+        if self.unlimited_count_var.get():
+            self.count_limit_var.set(False)
+            self.count_entry.config(state=tk.DISABLED)
+        
     def create_control_section(self, parent):
         """创建控制按钮部分"""
         control_frame = ttk.Frame(parent)
@@ -364,7 +556,7 @@ class AutoClicker:
         
         self.start_button = ttk.Button(
             control_frame,
-            text="▶️ 开始自动点击",
+            text="▶️ 开始自动点击 (Ctrl+Enter)",
             command=self.start_clicking,
             style="Accent.TButton"
         )
@@ -372,7 +564,7 @@ class AutoClicker:
         
         self.stop_button = ttk.Button(
             control_frame,
-            text="⏹️ 停止点击",
+            text="⏹️ 停止点击 (ESC)",
             command=self.stop_clicking,
             state=tk.DISABLED
         )
@@ -381,7 +573,7 @@ class AutoClicker:
         # 紧急停止提示
         emergency_label = tk.Label(
             control_frame,
-            text="紧急停止: 移动鼠标到屏幕左上角",
+            text="紧急停止: ESC键 或 移动鼠标到屏幕左上角",
             fg="#e74c3c",
             font=("Arial", 9)
         )
@@ -406,6 +598,42 @@ class AutoClicker:
             fg="#3498db"
         )
         self.click_count_label.pack()
+        
+        # 剩余时间显示
+        self.remaining_time_label = tk.Label(
+            status_frame,
+            text="剩余时间: --",
+            fg="#9b59b6"
+        )
+        self.remaining_time_label.pack()
+        
+        # 剩余次数显示
+        self.remaining_count_label = tk.Label(
+            status_frame,
+            text="剩余次数: --",
+            fg="#e67e22"
+        )
+        self.remaining_count_label.pack()
+        
+        # 快捷键提示
+        hotkey_frame = ttk.LabelFrame(status_frame, text="⌨️ 快捷键", padding="5")
+        hotkey_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        hotkey_text = (
+            "Ctrl+S: 选择区域\n"
+            "Ctrl+Enter: 开始/停止点击\n"
+            "ESC: 强制停止\n"
+            "Ctrl+Q: 退出程序"
+        )
+        
+        hotkey_label = tk.Label(
+            hotkey_frame,
+            text=hotkey_text,
+            fg="#7f8c8d",
+            font=("Arial", 9),
+            justify=tk.LEFT
+        )
+        hotkey_label.pack(anchor="w")
         
         self.click_count = 0
         
@@ -460,6 +688,23 @@ class AutoClicker:
             if not self.click_area:
                 raise ValueError("请先选择点击区域")
                 
+            # 验证时长限制设置
+            if self.duration_limit_var.get():
+                duration = float(self.duration_var.get())
+                if duration <= 0:
+                    raise ValueError("运行时长必须大于0")
+                    
+            # 验证次数限制设置
+            if self.count_limit_var.get():
+                max_total_clicks = int(self.max_total_clicks_var.get())
+                if max_total_clicks <= 0:
+                    raise ValueError("总点击次数必须大于0")
+                    
+            # 确保至少有一个限制条件或者选择了无限选项
+            if not self.unlimited_duration_var.get() and not self.duration_limit_var.get() and \
+               not self.unlimited_count_var.get() and not self.count_limit_var.get():
+                raise ValueError("请至少选择一种运行模式（时长限制、次数限制或无限模式）")
+                
             return True
             
         except ValueError as e:
@@ -476,9 +721,17 @@ class AutoClicker:
         self.stop_button.config(state=tk.NORMAL)
         self.area_button.config(state=tk.DISABLED)
         
+        # 初始化运行状态
+        self.start_time = time.time()
+        self.total_click_count = 0
+        
         # 启动点击线程
         self.click_thread = threading.Thread(target=self.clicking_loop, daemon=True)
         self.click_thread.start()
+        
+        # 启动状态更新线程
+        self.status_thread = threading.Thread(target=self.update_status_loop, daemon=True)
+        self.status_thread.start()
         
         self.status_label.config(text="运行中...", fg="#f39c12")
         
@@ -495,6 +748,20 @@ class AutoClicker:
         """点击循环"""
         while self.is_running:
             try:
+                # 检查时长限制
+                if self.duration_limit_var.get():
+                    duration_limit = float(self.duration_var.get()) * 60  # 转换为秒
+                    elapsed_time = time.time() - self.start_time
+                    if elapsed_time >= duration_limit:
+                        self.root.after(0, self.stop_clicking)
+                        break
+                        
+                # 检查次数限制
+                if self.count_limit_var.get():
+                    max_total_clicks = int(self.max_total_clicks_var.get())
+                    if self.total_click_count >= max_total_clicks:
+                        self.root.after(0, self.stop_clicking)
+                        break
                 # 获取随机时间间隔
                 min_time = float(self.min_time_var.get())
                 max_time = float(self.max_time_var.get())
@@ -542,9 +809,17 @@ class AutoClicker:
                     # 执行点击
                     pyautogui.click(click_x, click_y)
                     self.click_count += 1
+                    self.total_click_count += 1
                     
                     # 更新UI（在主线程中）
                     self.root.after(0, self.update_click_count)
+                    
+                    # 再次检查次数限制（在每次点击后）
+                    if self.count_limit_var.get():
+                        max_total_clicks = int(self.max_total_clicks_var.get())
+                        if self.total_click_count >= max_total_clicks:
+                            self.root.after(0, self.stop_clicking)
+                            break
                     
                     # 连续点击间隔（随机）
                     if i < click_count - 1:
@@ -559,6 +834,43 @@ class AutoClicker:
     def update_click_count(self):
         """更新点击计数显示"""
         self.click_count_label.config(text=f"总点击次数: {self.click_count}")
+        
+    def update_status_loop(self):
+        """状态更新循环"""
+        while self.is_running:
+            try:
+                # 更新剩余时间
+                if self.duration_limit_var.get():
+                    duration_limit = float(self.duration_var.get()) * 60  # 转换为秒
+                    elapsed_time = time.time() - self.start_time
+                    remaining_time = max(0, duration_limit - elapsed_time)
+                    
+                    if remaining_time > 0:
+                        minutes = int(remaining_time // 60)
+                        seconds = int(remaining_time % 60)
+                        time_text = f"剩余时间: {minutes:02d}:{seconds:02d}"
+                    else:
+                        time_text = "剩余时间: 00:00"
+                else:
+                    time_text = "剩余时间: 无限"
+                    
+                # 更新剩余次数
+                if self.count_limit_var.get():
+                    max_total_clicks = int(self.max_total_clicks_var.get())
+                    remaining_clicks = max(0, max_total_clicks - self.total_click_count)
+                    count_text = f"剩余次数: {remaining_clicks}"
+                else:
+                    count_text = "剩余次数: 无限"
+                    
+                # 在主线程中更新UI
+                self.root.after(0, lambda: self.remaining_time_label.config(text=time_text))
+                self.root.after(0, lambda: self.remaining_count_label.config(text=count_text))
+                
+                time.sleep(1)  # 每秒更新一次
+                
+            except Exception as e:
+                print(f"状态更新过程中发生错误: {e}")
+                break
         
     def run(self):
         """运行程序"""
@@ -576,6 +888,50 @@ class AutoClicker:
         x = (self.root.winfo_screenwidth() // 2) - (width // 2)
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
+        
+    def bind_hotkeys(self):
+        """绑定快捷键"""
+        # 绑定快捷键到主窗口
+        self.root.bind('<Control-s>', lambda e: self.hotkey_select_area())  # Ctrl+S 选择区域
+        self.root.bind('<Control-Return>', lambda e: self.hotkey_start_stop())  # Ctrl+Enter 开始/停止
+        self.root.bind('<Escape>', lambda e: self.hotkey_stop())  # ESC 强制停止
+        self.root.bind('<Control-q>', lambda e: self.root.quit())  # Ctrl+Q 退出程序
+        
+        # 确保窗口可以获得焦点以接收键盘事件
+        self.root.focus_set()
+        
+    def hotkey_select_area(self):
+        """快捷键：选择区域"""
+        if not self.is_running:
+            self.select_click_area()
+        else:
+            # 如果正在运行，显示提示
+            self.show_hotkey_message("请先停止点击再选择区域")
+            
+    def hotkey_start_stop(self):
+        """快捷键：开始/停止点击"""
+        if self.is_running:
+            self.stop_clicking()
+        else:
+            self.start_clicking()
+            
+    def hotkey_stop(self):
+        """快捷键：强制停止"""
+        if self.is_running:
+            self.stop_clicking()
+            self.show_hotkey_message("已通过快捷键停止点击")
+            
+    def show_hotkey_message(self, message):
+        """显示快捷键操作提示消息"""
+        # 创建一个临时的状态消息
+        original_text = self.status_label.cget("text")
+        original_color = self.status_label.cget("fg")
+        
+        # 显示快捷键消息
+        self.status_label.config(text=f"⌨️ {message}", fg="#f39c12")
+        
+        # 2秒后恢复原始状态
+        self.root.after(2000, lambda: self.status_label.config(text=original_text, fg=original_color))
 
 
 def main():
