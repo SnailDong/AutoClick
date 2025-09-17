@@ -15,6 +15,9 @@ import platform
 import sys
 from PIL import Image, ImageTk, ImageDraw
 import numpy as np
+import json
+import os
+from datetime import datetime
 
 class AreaSelector:
     """屏幕区域选择器"""
@@ -243,9 +246,9 @@ class AutoClicker:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("自动点击器 - 支持Windows/Mac")
-        self.root.geometry("520x700")
+        self.root.geometry("700x700")
         self.root.resizable(True, True)
-        self.root.minsize(480, 500)
+        self.root.minsize(560, 500)
         
         # 设置程序图标和样式
         self.setup_style()
@@ -261,11 +264,22 @@ class AutoClicker:
         # 创建GUI界面
         self.create_widgets()
         
+        # 配置文件目录（在绑定快捷键之前初始化）
+        self.config_dir = "configs"
+        if not os.path.exists(self.config_dir):
+            os.makedirs(self.config_dir)
+        
+        # 最后使用的配置文件
+        self.last_config_file = os.path.join(self.config_dir, "last_used.txt")
+        
         # 绑定快捷键
         self.bind_hotkeys()
         
         # 禁用pyautogui的安全机制（小心使用）
         pyautogui.FAILSAFE = False
+        
+        # 延迟自动加载最后使用的配置
+        self.root.after(200, self.load_last_used_config_on_startup)
         
     def setup_style(self):
         """设置界面样式"""
@@ -385,10 +399,13 @@ class AutoClicker:
         # 5. 时长和次数限制设置部分
         self.create_limit_section(self.scrollable_frame)
         
-        # 6. 控制按钮部分
+        # 6. 配置管理部分
+        self.create_config_section(self.scrollable_frame)
+        
+        # 7. 控制按钮部分
         self.create_control_section(self.scrollable_frame)
         
-        # 7. 状态显示部分
+        # 8. 状态显示部分
         self.create_status_section(self.scrollable_frame)
         
     def create_area_section(self, parent):
@@ -680,6 +697,64 @@ class AutoClicker:
         if self.unlimited_count_var.get():
             self.count_limit_var.set(False)
             self.count_entry.config(state=tk.DISABLED)
+        
+    def create_config_section(self, parent):
+        """创建配置管理部分"""
+        config_frame = ttk.LabelFrame(parent, text="💾 配置管理", padding="10")
+        config_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # 配置名称输入
+        name_frame = ttk.Frame(config_frame)
+        name_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(name_frame, text="配置名称:").pack(side=tk.LEFT)
+        self.config_name_var = tk.StringVar()
+        self.config_name_entry = ttk.Entry(name_frame, textvariable=self.config_name_var, width=20)
+        self.config_name_entry.pack(side=tk.LEFT, padx=(5, 10))
+        
+        # 保存配置按钮
+        save_config_btn = ttk.Button(
+            name_frame,
+            text="保存配置",
+            command=self.save_config,
+            width=12
+        )
+        save_config_btn.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # 配置选择和加载
+        load_frame = ttk.Frame(config_frame)
+        load_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        ttk.Label(load_frame, text="选择配置:").pack(side=tk.LEFT)
+        self.config_list_var = tk.StringVar()
+        self.config_combobox = ttk.Combobox(
+            load_frame,
+            textvariable=self.config_list_var,
+            width=18,
+            state="readonly"
+        )
+        self.config_combobox.pack(side=tk.LEFT, padx=(5, 10))
+        
+        # 加载配置按钮
+        load_config_btn = ttk.Button(
+            load_frame,
+            text="加载配置",
+            command=self.load_config,
+            width=12
+        )
+        load_config_btn.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # 删除配置按钮
+        delete_config_btn = ttk.Button(
+            load_frame,
+            text="删除配置",
+            command=self.delete_config,
+            width=12
+        )
+        delete_config_btn.pack(side=tk.LEFT, padx=(0, 0))
+        
+        # 延迟刷新配置列表，确保config_dir已经初始化
+        self.root.after(100, self.refresh_config_list)
         
     def create_control_section(self, parent):
         """创建控制按钮部分"""
@@ -1152,6 +1227,214 @@ class AutoClicker:
         
         # 2秒后恢复原始状态
         self.root.after(2000, lambda: self.status_label.config(text=original_text, fg=original_color))
+        
+    def get_current_config(self):
+        """获取当前所有配置设置（除了选择区域）"""
+        config = {
+            # 区域设置（不包括具体区域坐标）
+            "area_count": self.area_count_var.get(),
+            "min_area_interval": self.min_area_interval_var.get(),
+            "max_area_interval": self.max_area_interval_var.get(),
+            
+            # 时间设置
+            "min_time": self.min_time_var.get(),
+            "max_time": self.max_time_var.get(),
+            
+            # 连续点击设置
+            "min_clicks": self.min_clicks_var.get(),
+            "max_clicks": self.max_clicks_var.get(),
+            "min_click_interval": self.min_click_interval_var.get(),
+            "max_click_interval": self.max_click_interval_var.get(),
+            
+            # 位置偏差设置
+            "no_offset_probability": self.no_offset_probability_var.get(),
+            "x_offset": self.x_offset_var.get(),
+            "y_offset": self.y_offset_var.get(),
+            
+            # 运行限制设置
+            "duration_limit": self.duration_limit_var.get(),
+            "duration": self.duration_var.get(),
+            "unlimited_duration": self.unlimited_duration_var.get(),
+            "count_limit": self.count_limit_var.get(),
+            "max_total_clicks": self.max_total_clicks_var.get(),
+            "unlimited_count": self.unlimited_count_var.get(),
+            
+            # 保存时间戳
+            "created_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        return config
+        
+    def apply_config(self, config):
+        """应用配置到界面"""
+        try:
+            # 区域设置
+            self.area_count_var.set(config.get("area_count", "1"))
+            self.min_area_interval_var.set(config.get("min_area_interval", "0.3"))
+            self.max_area_interval_var.set(config.get("max_area_interval", "0.7"))
+            
+            # 时间设置
+            self.min_time_var.set(config.get("min_time", "1.0"))
+            self.max_time_var.set(config.get("max_time", "3.0"))
+            
+            # 连续点击设置
+            self.min_clicks_var.set(config.get("min_clicks", "1"))
+            self.max_clicks_var.set(config.get("max_clicks", "3"))
+            self.min_click_interval_var.set(config.get("min_click_interval", "0.05"))
+            self.max_click_interval_var.set(config.get("max_click_interval", "0.2"))
+            
+            # 位置偏差设置
+            self.no_offset_probability_var.set(config.get("no_offset_probability", "0.67"))
+            self.x_offset_var.set(config.get("x_offset", "10"))
+            self.y_offset_var.set(config.get("y_offset", "10"))
+            
+            # 运行限制设置
+            self.duration_limit_var.set(config.get("duration_limit", False))
+            self.duration_var.set(config.get("duration", "60"))
+            self.unlimited_duration_var.set(config.get("unlimited_duration", True))
+            self.count_limit_var.set(config.get("count_limit", False))
+            self.max_total_clicks_var.set(config.get("max_total_clicks", "100"))
+            self.unlimited_count_var.set(config.get("unlimited_count", False))
+            
+            # 更新界面状态
+            self.toggle_duration_limit()
+            self.toggle_count_limit()
+            self.toggle_unlimited_duration()
+            self.toggle_unlimited_count()
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"应用配置时发生错误: {str(e)}")
+            
+    def save_config(self):
+        """保存当前配置"""
+        config_name = self.config_name_var.get().strip()
+        if not config_name:
+            messagebox.showwarning("警告", "请输入配置名称")
+            return
+            
+        # 检查配置名称是否合法
+        if any(char in config_name for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+            messagebox.showerror("错误", "配置名称不能包含特殊字符")
+            return
+            
+        try:
+            config = self.get_current_config()
+            config_file = os.path.join(self.config_dir, f"{config_name}.json")
+            
+            # 如果文件已存在，询问是否覆盖
+            if os.path.exists(config_file):
+                if not messagebox.askyesno("确认", f"配置 '{config_name}' 已存在，是否覆盖？"):
+                    return
+                    
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+                
+            messagebox.showinfo("成功", f"配置 '{config_name}' 保存成功")
+            self.refresh_config_list()
+            self.config_name_var.set("")  # 清空输入框
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"保存配置失败: {str(e)}")
+            
+    def load_config(self):
+        """加载选中的配置"""
+        config_name = self.config_list_var.get()
+        if not config_name:
+            messagebox.showwarning("警告", "请选择要加载的配置")
+            return
+            
+        try:
+            config_file = os.path.join(self.config_dir, f"{config_name}.json")
+            if not os.path.exists(config_file):
+                messagebox.showerror("错误", "配置文件不存在")
+                self.refresh_config_list()
+                return
+                
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                
+            self.apply_config(config)
+            # 保存最后使用的配置名称
+            self.save_last_used_config(config_name)
+            messagebox.showinfo("成功", f"配置 '{config_name}' 加载成功")
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"加载配置失败: {str(e)}")
+            
+    def delete_config(self):
+        """删除选中的配置"""
+        config_name = self.config_list_var.get()
+        if not config_name:
+            messagebox.showwarning("警告", "请选择要删除的配置")
+            return
+            
+        if not messagebox.askyesno("确认", f"确定要删除配置 '{config_name}' 吗？"):
+            return
+            
+        try:
+            config_file = os.path.join(self.config_dir, f"{config_name}.json")
+            if os.path.exists(config_file):
+                os.remove(config_file)
+                messagebox.showinfo("成功", f"配置 '{config_name}' 删除成功")
+                self.refresh_config_list()
+            else:
+                messagebox.showerror("错误", "配置文件不存在")
+                self.refresh_config_list()
+                
+        except Exception as e:
+            messagebox.showerror("错误", f"删除配置失败: {str(e)}")
+            
+    def refresh_config_list(self):
+        """刷新配置列表"""
+        try:
+            if not os.path.exists(self.config_dir):
+                os.makedirs(self.config_dir)
+                
+            config_files = [f[:-5] for f in os.listdir(self.config_dir) if f.endswith('.json')]
+            config_files.sort()
+            
+            self.config_combobox['values'] = config_files
+            
+            # 尝试加载最后使用的配置
+            last_used = self.get_last_used_config()
+            if last_used and last_used in config_files:
+                self.config_list_var.set(last_used)
+            elif config_files and not self.config_list_var.get():
+                self.config_list_var.set(config_files[0])
+                
+        except Exception as e:
+            print(f"刷新配置列表失败: {str(e)}")
+            
+    def save_last_used_config(self, config_name):
+        """保存最后使用的配置名称"""
+        try:
+            with open(self.last_config_file, 'w', encoding='utf-8') as f:
+                f.write(config_name)
+        except Exception as e:
+            print(f"保存最后使用配置失败: {str(e)}")
+            
+    def get_last_used_config(self):
+        """获取最后使用的配置名称"""
+        try:
+            if os.path.exists(self.last_config_file):
+                with open(self.last_config_file, 'r', encoding='utf-8') as f:
+                    return f.read().strip()
+        except Exception as e:
+            print(f"读取最后使用配置失败: {str(e)}")
+        return None
+        
+    def load_last_used_config_on_startup(self):
+        """启动时自动加载最后使用的配置"""
+        last_used = self.get_last_used_config()
+        if last_used:
+            try:
+                config_file = os.path.join(self.config_dir, f"{last_used}.json")
+                if os.path.exists(config_file):
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                    self.apply_config(config)
+                    print(f"自动加载配置: {last_used}")
+            except Exception as e:
+                print(f"自动加载配置失败: {str(e)}")
 
 
 def main():

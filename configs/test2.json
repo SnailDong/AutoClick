@@ -1,0 +1,21 @@
+{
+  "area_count": "2",
+  "min_area_interval": "1",
+  "max_area_interval": "3",
+  "min_time": "5",
+  "max_time": "8",
+  "min_clicks": "1",
+  "max_clicks": "3",
+  "min_click_interval": "0.1",
+  "max_click_interval": "0.3",
+  "no_offset_probability": "0.67",
+  "x_offset": "10",
+  "y_offset": "10",
+  "duration_limit": false,
+  "duration": "10",
+  "unlimited_duration": true,
+  "count_limit": false,
+  "max_total_clicks": "1000",
+  "unlimited_count": true,
+  "created_time": "2025-09-17 14:34:15"
+}
