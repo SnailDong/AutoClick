@@ -19,8 +19,11 @@ import numpy as np
 class AreaSelector:
     """屏幕区域选择器"""
     
-    def __init__(self, callback):
+    def __init__(self, callback, area_count=1):
         self.callback = callback
+        self.area_count = area_count
+        self.current_area = 0
+        self.selected_areas = []
         self.start_x = None
         self.start_y = None
         self.end_x = None
@@ -74,15 +77,21 @@ class AreaSelector:
             text_x - 200, text_y - 20,
             text_x + 200, text_y + 20,
             fill="black", outline="red", width=2,
-            stipple="gray50"
+            stipple="gray50", tags="tip_text"
         )
         
         # 添加提示文字
+        if self.area_count > 1:
+            tip_text = f"选择第 {self.current_area + 1}/{self.area_count} 个区域，拖拽鼠标选择，按ESC键取消"
+        else:
+            tip_text = "拖拽鼠标选择点击区域，按ESC键取消"
+            
         self.canvas.create_text(
             text_x, text_y,
-            text="拖拽鼠标选择点击区域，按ESC键取消",
+            text=tip_text,
             fill="white",
-            font=("Arial", 16, "bold")
+            font=("Arial", 16, "bold"),
+            tags="tip_text"
         )
         
         # 绑定鼠标事件
@@ -159,12 +168,64 @@ class AreaSelector:
             
             # 检查区域大小
             if abs(x2 - x1) > 10 and abs(y2 - y1) > 10:
-                self.callback((x1, y1, x2, y2))
-                self.close_selector()
+                # 添加当前区域到列表
+                self.selected_areas.append((x1, y1, x2, y2))
+                self.current_area += 1
+                
+                # 检查是否还需要选择更多区域
+                if self.current_area < self.area_count:
+                    # 重置选择状态，准备选择下一个区域
+                    self.start_x = None
+                    self.start_y = None
+                    self.end_x = None
+                    self.end_y = None
+                    
+                    # 清除当前选择框
+                    self.canvas.delete("selection")
+                    
+                    # 更新提示文字
+                    self.update_tip_text()
+                else:
+                    # 所有区域选择完成
+                    self.callback(self.selected_areas)
+                    self.close_selector()
             else:
                 messagebox.showwarning("警告", "选择的区域太小，请重新选择")
-                self.close_selector()
+                # 不关闭选择器，让用户重新选择当前区域
                 
+    def update_tip_text(self):
+        """更新提示文字"""
+        # 删除旧的提示文字
+        self.canvas.delete("tip_text")
+        
+        # 获取屏幕尺寸
+        screen_width = self.root.winfo_screenwidth()
+        text_x = screen_width // 2
+        text_y = 50
+        
+        # 创建新的提示文字
+        if self.area_count > 1:
+            tip_text = f"选择第 {self.current_area + 1}/{self.area_count} 个区域，拖拽鼠标选择，按ESC键取消"
+        else:
+            tip_text = "拖拽鼠标选择点击区域，按ESC键取消"
+            
+        # 创建文字背景
+        self.canvas.create_rectangle(
+            text_x - 200, text_y - 20,
+            text_x + 200, text_y + 20,
+            fill="black", outline="red", width=2,
+            stipple="gray50", tags="tip_text"
+        )
+        
+        # 添加提示文字
+        self.canvas.create_text(
+            text_x, text_y,
+            text=tip_text,
+            fill="white",
+            font=("Arial", 16, "bold"),
+            tags="tip_text"
+        )
+        
     def cancel_selection(self, event):
         """取消选择"""
         self.close_selector()
@@ -190,7 +251,8 @@ class AutoClicker:
         self.setup_style()
         
         # 初始化变量
-        self.click_area = None  # (x1, y1, x2, y2)
+        self.click_areas = []  # 多个区域列表 [(x1, y1, x2, y2), ...]
+        self.current_area_index = 0  # 当前点击区域索引
         self.is_running = False
         self.click_thread = None
         self.start_time = None  # 开始时间
@@ -331,19 +393,51 @@ class AutoClicker:
         
     def create_area_section(self, parent):
         """创建区域选择部分"""
-        area_frame = ttk.LabelFrame(parent, text="📍 点击区域设置", padding="10")
+        area_frame = ttk.LabelFrame(parent, text="📍 多区域点击设置", padding="10")
         area_frame.pack(fill=tk.X, pady=(0, 10))
         
-        self.area_button = ttk.Button(
+        # 区域数量设置
+        area_count_frame = ttk.Frame(area_frame)
+        area_count_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(area_count_frame, text="区域数量:").pack(side=tk.LEFT)
+        self.area_count_var = tk.StringVar(value="1")
+        area_count_entry = ttk.Entry(area_count_frame, textvariable=self.area_count_var, width=5)
+        area_count_entry.pack(side=tk.LEFT, padx=(5, 10))
+        
+        ttk.Label(area_count_frame, text="区域间隔范围(秒):").pack(side=tk.LEFT)
+        self.min_area_interval_var = tk.StringVar(value="0.3")
+        min_area_interval_entry = ttk.Entry(area_count_frame, textvariable=self.min_area_interval_var, width=6)
+        min_area_interval_entry.pack(side=tk.LEFT, padx=(5, 2))
+        
+        ttk.Label(area_count_frame, text="-").pack(side=tk.LEFT)
+        self.max_area_interval_var = tk.StringVar(value="0.7")
+        max_area_interval_entry = ttk.Entry(area_count_frame, textvariable=self.max_area_interval_var, width=6)
+        max_area_interval_entry.pack(side=tk.LEFT, padx=(2, 0))
+        
+        # 区域间隔说明
+        area_desc_label = tk.Label(
             area_frame,
-            text="选择屏幕区域 (Ctrl+S)",
-            command=self.select_click_area,
+            text="区域间隔：一次循环中从一个区域切换到下一个区域的随机等待时间",
+            fg="#7f8c8d",
+            font=("Arial", 9)
+        )
+        area_desc_label.pack(anchor="w", pady=(5, 0))
+        
+        # 选择按钮和状态
+        button_frame = ttk.Frame(area_frame)
+        button_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        self.area_button = ttk.Button(
+            button_frame,
+            text="开始选择区域 (Ctrl+S)",
+            command=self.select_click_areas,
             width=22
         )
         self.area_button.pack(side=tk.LEFT)
         
         self.area_label = tk.Label(
-            area_frame,
+            button_frame,
             text="未选择区域",
             fg="#e74c3c"
         )
@@ -351,23 +445,32 @@ class AutoClicker:
         
     def create_time_section(self, parent):
         """创建时间设置部分"""
-        time_frame = ttk.LabelFrame(parent, text="⏰ 点击时间间隔设置", padding="10")
+        time_frame = ttk.LabelFrame(parent, text="⏰ 循环时间间隔设置", padding="10")
         time_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # 最小时间间隔
+        # 说明文字
+        desc_label = tk.Label(
+            time_frame,
+            text="循环间隔：完成所有区域一轮点击后，开始下一轮循环前的等待时间",
+            fg="#7f8c8d",
+            font=("Arial", 9)
+        )
+        desc_label.pack(anchor="w", pady=(0, 5))
+        
+        # 最小循环间隔
         min_time_frame = ttk.Frame(time_frame)
         min_time_frame.pack(fill=tk.X, pady=(0, 5))
         
-        ttk.Label(min_time_frame, text="最小间隔(秒):").pack(side=tk.LEFT)
+        ttk.Label(min_time_frame, text="最小循环间隔(秒):").pack(side=tk.LEFT)
         self.min_time_var = tk.StringVar(value="1.0")
         min_time_entry = ttk.Entry(min_time_frame, textvariable=self.min_time_var, width=10)
         min_time_entry.pack(side=tk.LEFT, padx=(10, 0))
         
-        # 最大时间间隔
+        # 最大循环间隔
         max_time_frame = ttk.Frame(time_frame)
         max_time_frame.pack(fill=tk.X)
         
-        ttk.Label(max_time_frame, text="最大间隔(秒):").pack(side=tk.LEFT)
+        ttk.Label(max_time_frame, text="最大循环间隔(秒):").pack(side=tk.LEFT)
         self.max_time_var = tk.StringVar(value="3.0")
         max_time_entry = ttk.Entry(max_time_frame, textvariable=self.max_time_var, width=10)
         max_time_entry.pack(side=tk.LEFT, padx=(10, 0))
@@ -376,6 +479,15 @@ class AutoClicker:
         """创建点击次数设置部分"""
         click_frame = ttk.LabelFrame(parent, text="🖱️ 连续点击次数设置", padding="10")
         click_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # 说明文字
+        desc_label = tk.Label(
+            click_frame,
+            text="连续点击：单个区域内一次点击事件中的快速连续点击",
+            fg="#7f8c8d",
+            font=("Arial", 9)
+        )
+        desc_label.pack(anchor="w", pady=(0, 5))
         
         # 最小点击次数
         min_click_frame = ttk.Frame(click_frame)
@@ -417,6 +529,26 @@ class AutoClicker:
         """创建位置偏差设置部分"""
         offset_frame = ttk.LabelFrame(parent, text="📐 点击位置偏差设置", padding="10")
         offset_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # 说明文字
+        desc_label = tk.Label(
+            offset_frame,
+            text="连续点击偏差概率设置：无偏差概率(0-1)，剩余概率为有偏差",
+            fg="#7f8c8d",
+            font=("Arial", 9)
+        )
+        desc_label.pack(anchor="w", pady=(0, 5))
+        
+        # 无偏差概率设置
+        no_offset_prob_frame = ttk.Frame(offset_frame)
+        no_offset_prob_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(no_offset_prob_frame, text="无偏差概率:").pack(side=tk.LEFT)
+        self.no_offset_probability_var = tk.StringVar(value="0.67")
+        no_offset_prob_entry = ttk.Entry(no_offset_prob_frame, textvariable=self.no_offset_probability_var, width=8)
+        no_offset_prob_entry.pack(side=tk.LEFT, padx=(10, 10))
+        
+        ttk.Label(no_offset_prob_frame, text="(0.0-1.0，如0.67表示67%无偏差)").pack(side=tk.LEFT)
         
         # X轴偏差
         x_offset_frame = ttk.Frame(offset_frame)
@@ -615,6 +747,14 @@ class AutoClicker:
         )
         self.remaining_count_label.pack()
         
+        # 当前区域显示
+        self.current_area_label = tk.Label(
+            status_frame,
+            text="当前区域: --",
+            fg="#8e44ad"
+        )
+        self.current_area_label.pack()
+        
         # 快捷键提示
         hotkey_frame = ttk.LabelFrame(status_frame, text="⌨️ 快捷键", padding="5")
         hotkey_frame.pack(fill=tk.X, pady=(10, 0))
@@ -637,20 +777,37 @@ class AutoClicker:
         
         self.click_count = 0
         
-    def select_click_area(self):
-        """选择点击区域"""
+    def select_click_areas(self):
+        """选择多个点击区域"""
         if self.is_running:
             messagebox.showwarning("警告", "请先停止自动点击")
             return
             
-        def area_callback(area):
-            self.click_area = area
-            self.area_label.config(
-                text=f"区域: ({area[0]}, {area[1]}) - ({area[2]}, {area[3]})",
-                fg="#27ae60"
-            )
+        try:
+            area_count = int(self.area_count_var.get())
+            if area_count < 1 or area_count > 10:
+                messagebox.showerror("错误", "区域数量必须在1-10之间")
+                return
+        except ValueError:
+            messagebox.showerror("错误", "请输入有效的区域数量")
+            return
             
-        selector = AreaSelector(area_callback)
+        def areas_callback(areas):
+            self.click_areas = areas
+            self.current_area_index = 0
+            if len(areas) == 1:
+                area = areas[0]
+                self.area_label.config(
+                    text=f"区域: ({area[0]}, {area[1]}) - ({area[2]}, {area[3]})",
+                    fg="#27ae60"
+                )
+            else:
+                self.area_label.config(
+                    text=f"已选择 {len(areas)} 个区域",
+                    fg="#27ae60"
+                )
+            
+        selector = AreaSelector(areas_callback, area_count)
         selector.select_area()
         
     def validate_settings(self):
@@ -684,9 +841,23 @@ class AutoClicker:
             if x_offset < 0 or y_offset < 0:
                 raise ValueError("位置偏差不能为负数")
                 
+            # 验证无偏差概率设置
+            no_offset_prob = float(self.no_offset_probability_var.get())
+            if no_offset_prob < 0 or no_offset_prob > 1:
+                raise ValueError("无偏差概率必须在0.0-1.0之间")
+                
             # 验证点击区域
-            if not self.click_area:
+            if not self.click_areas:
                 raise ValueError("请先选择点击区域")
+                
+            # 验证区域间隔
+            if len(self.click_areas) > 1:
+                min_area_interval = float(self.min_area_interval_var.get())
+                max_area_interval = float(self.max_area_interval_var.get())
+                if min_area_interval < 0 or max_area_interval < 0:
+                    raise ValueError("区域间隔不能为负数")
+                if min_area_interval > max_area_interval:
+                    raise ValueError("区域间隔最小值不能大于最大值")
                 
             # 验证时长限制设置
             if self.duration_limit_var.get():
@@ -766,74 +937,112 @@ class AutoClicker:
                     if self.total_click_count >= max_total_clicks:
                         self.root.after(0, self.stop_clicking)
                         break
-                # 获取随机时间间隔
-                min_time = float(self.min_time_var.get())
-                max_time = float(self.max_time_var.get())
-                wait_time = random.uniform(min_time, max_time)
                 
-                # 等待指定时间
-                time.sleep(wait_time)
+                # 执行一轮完整的循环（所有区域）
+                self.execute_one_cycle()
                 
                 if not self.is_running:
                     break
-                    
-                # 获取随机点击次数
-                min_clicks = int(self.min_clicks_var.get())
-                max_clicks = int(self.max_clicks_var.get())
-                click_count = random.randint(min_clicks, max_clicks)
                 
-                # 获取连续点击间隔范围
-                min_click_interval = float(self.min_click_interval_var.get())
-                max_click_interval = float(self.max_click_interval_var.get())
-                
-                # 获取位置偏差设置
-                x_offset = int(self.x_offset_var.get())
-                y_offset = int(self.y_offset_var.get())
-                
-                # 在区域内随机选择第一个点击位置
-                x1, y1, x2, y2 = self.click_area
-                base_x = random.randint(x1, x2)
-                base_y = random.randint(y1, y2)
-                
-                # 执行连续点击
-                for i in range(click_count):
-                    if not self.is_running:
-                        break
-                        
-                    # 计算当前点击位置（带偏差）
-                    if i == 0:
-                        click_x, click_y = base_x, base_y
-                    else:
-                        # 在上一次点击位置基础上添加随机偏差
-                        offset_x = random.randint(-x_offset, x_offset)
-                        offset_y = random.randint(-y_offset, y_offset)
-                        click_x = max(x1, min(x2, base_x + offset_x))
-                        click_y = max(y1, min(y2, base_y + offset_y))
-                    
-                    # 执行点击
-                    pyautogui.click(click_x, click_y)
-                    self.click_count += 1
-                    self.total_click_count += 1
-                    
-                    # 更新UI（在主线程中）
-                    self.root.after(0, self.update_click_count)
-                    
-                    # 再次检查次数限制（在每次点击后）
-                    if self.count_limit_var.get():
-                        max_total_clicks = int(self.max_total_clicks_var.get())
-                        if self.total_click_count >= max_total_clicks:
-                            self.root.after(0, self.stop_clicking)
-                            break
-                    
-                    # 连续点击间隔（随机）
-                    if i < click_count - 1:
-                        random_interval = random.uniform(min_click_interval, max_click_interval)
-                        time.sleep(random_interval)
+                # 循环间隔：完成所有区域一轮点击后的等待时间
+                min_time = float(self.min_time_var.get())
+                max_time = float(self.max_time_var.get())
+                cycle_wait_time = random.uniform(min_time, max_time)
+                time.sleep(cycle_wait_time)
                         
             except Exception as e:
                 print(f"点击过程中发生错误: {e}")
                 self.root.after(0, self.stop_clicking)
                 break
+                
+    def execute_one_cycle(self):
+        """执行一轮完整的循环（所有区域）"""
+        # 获取连续点击间隔范围
+        min_click_interval = float(self.min_click_interval_var.get())
+        max_click_interval = float(self.max_click_interval_var.get())
+        
+        # 获取位置偏差设置
+        x_offset = int(self.x_offset_var.get())
+        y_offset = int(self.y_offset_var.get())
+        
+        # 获取区域间隔范围
+        min_area_interval = float(self.min_area_interval_var.get())
+        max_area_interval = float(self.max_area_interval_var.get())
+        
+        # 遍历所有区域
+        for area_index in range(len(self.click_areas)):
+            if not self.is_running:
+                break
+                
+            # 更新当前区域索引
+            self.current_area_index = area_index
+            
+            # 获取当前区域
+            current_area = self.click_areas[area_index]
+            x1, y1, x2, y2 = current_area
+            
+            # 执行当前区域的点击事件
+            self.execute_area_clicks(x1, y1, x2, y2, x_offset, y_offset, min_click_interval, max_click_interval)
+            
+            # 区域间隔：切换到下一个区域前的随机等待时间（最后一个区域不需要等待）
+            if area_index < len(self.click_areas) - 1 and max_area_interval > 0:
+                random_area_interval = random.uniform(min_area_interval, max_area_interval)
+                time.sleep(random_area_interval)
+                
+    def execute_area_clicks(self, x1, y1, x2, y2, x_offset, y_offset, min_click_interval, max_click_interval):
+        """执行单个区域的点击事件"""
+        # 获取随机点击次数
+        min_clicks = int(self.min_clicks_var.get())
+        max_clicks = int(self.max_clicks_var.get())
+        click_count = random.randint(min_clicks, max_clicks)
+        
+        # 在区域内随机选择基础点击位置
+        base_x = random.randint(x1, x2)
+        base_y = random.randint(y1, y2)
+        
+        # 执行连续点击
+        for i in range(click_count):
+            if not self.is_running:
+                break
+                
+            # 计算当前点击位置（带随机偏差概率）
+            if i == 0:
+                # 第一次点击总是在基础位置
+                click_x, click_y = base_x, base_y
+            else:
+                # 根据用户设置的概率决定是否使用偏差
+                no_offset_prob = float(self.no_offset_probability_var.get())
+                use_offset = random.random() >= no_offset_prob  # 大于等于无偏差概率时使用偏差
+                
+                if use_offset:
+                    # 有偏差：在基础位置上添加随机偏差
+                    offset_x = random.randint(-x_offset, x_offset)
+                    offset_y = random.randint(-y_offset, y_offset)
+                    click_x = max(x1, min(x2, base_x + offset_x))
+                    click_y = max(y1, min(y2, base_y + offset_y))
+                else:
+                    # 无偏差：在基础位置点击
+                    click_x, click_y = base_x, base_y
+            
+            # 执行点击
+            pyautogui.click(click_x, click_y)
+            self.click_count += 1
+            self.total_click_count += 1
+            
+            # 更新UI（在主线程中）
+            self.root.after(0, self.update_click_count)
+            
+            # 检查次数限制（在每次点击后）
+            if self.count_limit_var.get():
+                max_total_clicks = int(self.max_total_clicks_var.get())
+                if self.total_click_count >= max_total_clicks:
+                    self.root.after(0, self.stop_clicking)
+                    return
+            
+            # 连续点击间隔：同一区域内连续点击之间的快速间隔
+            if i < click_count - 1:
+                random_interval = random.uniform(min_click_interval, max_click_interval)
+                time.sleep(random_interval)
                 
     def update_click_count(self):
         """更新点击计数显示"""
@@ -866,9 +1075,16 @@ class AutoClicker:
                 else:
                     count_text = "剩余次数: 无限"
                     
+                # 更新当前区域信息
+                if len(self.click_areas) > 1:
+                    area_text = f"当前区域: {self.current_area_index + 1}/{len(self.click_areas)}"
+                else:
+                    area_text = "当前区域: 单区域"
+                
                 # 在主线程中更新UI
                 self.root.after(0, lambda: self.remaining_time_label.config(text=time_text))
                 self.root.after(0, lambda: self.remaining_count_label.config(text=count_text))
+                self.root.after(0, lambda: self.current_area_label.config(text=area_text))
                 
                 time.sleep(1)  # 每秒更新一次
                 
@@ -907,7 +1123,7 @@ class AutoClicker:
     def hotkey_select_area(self):
         """快捷键：选择区域"""
         if not self.is_running:
-            self.select_click_area()
+            self.select_click_areas()
         else:
             # 如果正在运行，显示提示
             self.show_hotkey_message("请先停止点击再选择区域")
